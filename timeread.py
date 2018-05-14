@@ -1,7 +1,9 @@
 import re
 import datetime
 import csv
+
 from operator import itemgetter
+import itertools
 
 to = datetime.datetime.now()
 
@@ -14,7 +16,7 @@ for line in tt:
     if line.startswith("#"):
         routelist = []
         keyname = line[0:9]
-    if line.startswith(">") or line.startswith("+"):
+    if line.startswith(">") or line.startswith("+"): #start en stops
         lineholder = re.findall(r'\w+', line)
         
     #corrigeren voor nachttreinen
@@ -33,7 +35,7 @@ for line in tt:
             lineholder[2] = datetime.datetime.strptime(lineholder[2], '%H%M').time()
         routelist.append(lineholder)
 
-    if line.startswith("<"):
+    if line.startswith("<"): #eindpunt 
         lineholder = re.findall(r'\w+', line)
 
     #corrigeren voor nachttreinen
@@ -88,10 +90,12 @@ for s in stationtable:
 
 # generate lists of departure and arrival stations
 departures = []
-arrivals = []
 for line in stationtable:
     departures.append(line[1])
-    arrivals.append(line[1])
+
+stationpairs = [] 
+for subset in itertools.combinations(departures, 2):
+    stationpairs.append(subset)   
 
 te = datetime.datetime.now()
 print("Stations parsed")
@@ -99,208 +103,230 @@ print("Time spent: %s \n" % (te-to))
 
 #link up stations
 
-station1 = ['Groningen', 'gn', '53.21055603', '6.564722061', 'Netherlands', '05', '1']
-station2 = ['Amsterdam Centraal', 'asd', '52.37888718', '4.900277615', 'Netherlands', '05', '1']
-
 #find times for station1 to station2
-listofdep = []
-for k, v in routedict.items():
-    for dep in v:
-        if isinstance(dep, int): #if first line from dict value (= frequency of train)
-            freq = dep
-        elif isinstance(dep, list) and dep[0] == station1[1]: #if list of train stops
-            lookfrom = v.index(dep)
-            deptime = dep[-1]
-            connectiondummy = 0
-            for arr in v[lookfrom:]:
-                if arr[0] == station2[1]: #if combination is made: save dept, arr, difference
-                    arrtime = arr[1]
-                    td2 = datetime.date.today() #to handle trains leaving around 12am
-                    if round((datetime.datetime.combine(td2, arrtime) - datetime.datetime.combine(td2, deptime)).total_seconds()/60) < 0:
-                        td1 = datetime.date.today() - datetime.timedelta(days=1)
-                    else:
-                        td1 = datetime.date.today()
-                    difference = round((datetime.datetime.combine(td2, arrtime) - datetime.datetime.combine(td1, deptime)).total_seconds()/60)
-                    listofdep.append([k,freq,deptime, arrtime,difference])
-                    connectiondummy = 1
-            #if connectiondummy == 0:
+alldepslist = []
+traveltimeslist = []
+for pair in stationpairs:
+    listofdep =[]
+    
+    for k, v in routedict.items():
+        for dep in v:
+            if isinstance(dep, int): #if first line from dict value (= frequency of train)
+                freq = dep
+            elif isinstance(dep, list) and dep[0] == pair[0]: #if list of train stops
+                lookfrom = v.index(dep)
+                deptime = dep[-1]
+                
+                for arr in v[lookfrom:]: # CHECKS FOR DIRECT CONNECTIONS
+                    if arr[0] == pair[1]: #if combination is made: save dept, arr, difference
+                        arrtime = arr[1]
+                        td2 = datetime.date.today() #to handle trains leaving around 12am
+                        if round((datetime.datetime.combine(td2, arrtime) - datetime.datetime.combine(td2, deptime)).total_seconds()/60) < 0:
+                            td1 = datetime.date.today() - datetime.timedelta(days=1)
+                        else:
+                            td1 = datetime.date.today()
+                        difference = round((datetime.datetime.combine(td2, arrtime) - datetime.datetime.combine(td1, deptime)).total_seconds()/60)
+                        listofdep.append([k,freq,deptime, arrtime,difference])
+    
+    #find times for station2 to station1
+    listofarr = []
+    for k, v in routedict.items():
+        for dep in v:
+            if isinstance(dep, int): #if first line from dict value (= frequency of train)
+                freq = dep
+            elif isinstance(dep, list) and dep[0] == pair[1]: #if list of train stops
+                lookfrom = v.index(dep)
+                deptime = dep[-1]
+                
+                for arr in v[lookfrom:]: # CHECKS FOR DIRECT CONNECTIONS
+                    if arr[0] == pair[0]: #if combination is made: save dept, arr, difference
+                        arrtime = arr[1]
+                        td2 = datetime.date.today() #to handle trains leaving around 12am
+                        if round((datetime.datetime.combine(td2, arrtime) - datetime.datetime.combine(td2, deptime)).total_seconds()/60) < 0:
+                            td1 = datetime.date.today() - datetime.timedelta(days=1)
+                        else:
+                            td1 = datetime.date.today()
+                        difference = round((datetime.datetime.combine(td2, arrtime) - datetime.datetime.combine(td1, deptime)).total_seconds()/60)
+                        listofarr.append([k,freq,deptime, arrtime,difference])
+    
+    #for station1 to station2: calculate set plus frequency by time
+    listofdep.sort(key=itemgetter(4))
 
+    setofdep = []
+    totalfreqcontainer = 0
+    
+    for train in listofdep:
+        if train == listofdep[0]: #first row
+            frequencycontainer = train[1]
+            totalfreqcontainer = train[1]
+            differencecontainer = train[4]
+        elif train != listofdep[0] and train[4] == differencecontainer: #if same time
+            frequencycontainer += train[1]
+            totalfreqcontainer += train[1]
+        elif train != listofdep[0] and train[4] != differencecontainer: #if different time
+            setofdep.append([differencecontainer, frequencycontainer])
+            frequencycontainer = train[1]
+            differencecontainer = train[4]
+            totalfreqcontainer += train[1]
+    try:
+        setofdep.append([differencecontainer, frequencycontainer])   
+    except:
+        pass
+    #for station 1 to station 2: find 3 most common travel times
+    setofdep.sort(key=itemgetter(1))
 
+    try:
+        traveltime121 = setofdep[-1]
+    except:
+        traveltime121 = [None, None]
 
-#find times for station2 to station1
-listofarr = []
-for k, v in routedict.items():
-    for dep in v:
-        if isinstance(dep, int): #if first line from dict value (= frequency of train)
-            freq = dep
-        elif isinstance(dep, list) and dep[0] == station2[1]: #if list of train stops
-            lookfrom = v.index(dep)
-            deptime = dep[-1]
-            for arr in v[lookfrom:]:
-                if arr[0] == station1[1]: #if combination is made: save dept, arr, difference
-                    arrtime = arr[1]
-                    td2 = datetime.date.today() #to handle trains leaving around 12am
-                    if round((datetime.datetime.combine(td2, arrtime) - datetime.datetime.combine(td2, deptime)).total_seconds()/60) < 0:
-                        td1 = datetime.date.today() - datetime.timedelta(days=1)
-                    else:
-                        td1 = datetime.date.today()
-                    difference = round((datetime.datetime.combine(td2, arrtime) - datetime.datetime.combine(td1, deptime)).total_seconds()/60)
-                    listofarr.append([k,freq,deptime, arrtime,difference])
+    try:
+        traveltime122 = setofdep[-2]
+    except:
+        traveltime122 = [None, None]
 
-#for station1 to station2: calculate set plus frequency by time
-listofdep.sort(key=itemgetter(4))
+    try:
+        traveltime123 = setofdep[-3]
+    except:
+        traveltime123 = [None, None]
+    
+    trainsperday12 = round(totalfreqcontainer/364)
 
-setofdep = []
-for train in listofdep:
-    if train == listofdep[0]: #first row
-        frequencycontainer = train[1]
-        totalfreqcontainer = train[1]
-        differencecontainer = train[4]
-    elif train != listofdep[0] and train[4] == differencecontainer: #if same time
-        frequencycontainer += train[1]
-        totalfreqcontainer += train[1]
-    elif train != listofdep[0] and train[4] != differencecontainer: #if different time
-        setofdep.append([differencecontainer, frequencycontainer])
-        frequencycontainer = train[1]
-        differencecontainer = train[4]
-        totalfreqcontainer += train[1]
-    elif train == listofdep[-1] and train[4] == differencecontainer: #last row, same time  
-        frequencycontainer += train[1]
-        setofdep.append([differencecontainer, frequencycontainer])
-        totalfreqcontainer += train[1]
-    elif train == listofdep[-1] and train[4] != differencecontainer: # last row, different time
-        frequencycontainer = train[1]
-        differencecontainer = train[4]
-        setofdep.append([differencecontainer, frequencycontainer])
-        totalfreqcontainer += train[1]
-
-#for station 1 to station 2: find 3 most common travel times
-setofdep.sort(key=itemgetter(1))
-
-traveltime121 = setofdep[-1]
-traveltime122 = setofdep[-2]
-traveltime123 = setofdep[-3]
-
-trainsperday12 = round(totalfreqcontainer/364)
-
-#for station2 to station1: calculate set plus frequency by time
-listofarr.sort(key=itemgetter(4))
-
-setofarr = []
-for train in listofarr:
-    if train == listofarr[0]: #first row
-        frequencycontainer = train[1]
-        totalfreqcontainer = train[1]
-        differencecontainer = train[4]
-    elif train != listofarr[0] and train[4] == differencecontainer: #if same time
-        frequencycontainer += train[1]
-        totalfreqcontainer += train[1]
-    elif train != listofarr[0] and train[4] != differencecontainer: #if different time
+    #for station2 to station1: calculate set plus frequency by time
+    listofarr.sort(key=itemgetter(4))
+    
+    setofarr = []
+    totalfreqcontainer = 0
+    
+    for train in listofarr:
+        if train == listofarr[0]: #first row
+            frequencycontainer = train[1]
+            totalfreqcontainer = train[1]
+            differencecontainer = train[4]
+        elif train != listofarr[0] and train[4] == differencecontainer: #if same time
+            frequencycontainer += train[1]
+            totalfreqcontainer += train[1]
+        elif train != listofarr[0] and train[4] != differencecontainer: #if different time
+            setofarr.append([differencecontainer, frequencycontainer])
+            frequencycontainer = train[1]
+            differencecontainer = train[4]
+            totalfreqcontainer += train[1]
+    try:
         setofarr.append([differencecontainer, frequencycontainer])
-        frequencycontainer = train[1]
-        differencecontainer = train[4]
-        totalfreqcontainer += train[1]
-    elif train == listofarr[-1] and train[4] == differencecontainer: #last row, same time  
-        frequencycontainer += train[1]
-        setofarr.append([differencecontainer, frequencycontainer])
-        totalfreqcontainer += train[1]
-    elif train == listofarr[-1] and train[4] != differencecontainer: # last row, different time
-        frequencycontainer = train[1]
-        differencecontainer = train[4]
-        setofarr.append([differencecontainer, frequencycontainer])
-        totalfreqcontainer += train[1]
- 
-#for station 2 to station 1: find 3 most common travel times
-setofarr.sort(key=itemgetter(1))
+    except:
+        pass
+    #for station 2 to station 1: find 3 most common travel times
+    setofarr.sort(key=itemgetter(1))
 
-traveltime211 = setofdep[-1]
-traveltime212 = setofdep[-2]
-traveltime213 = setofdep[-3]
+    try:
+        traveltime211 = setofarr[-1]
+    except:
+        traveltime211 = [None, None]
 
-trainsperday21 = round(totalfreqcontainer/364)
+    try:
+        traveltime212 = setofarr[-2]
+    except:
+        traveltime212 = [None, None]
 
-#find first and last travel times based on largest difference between departure times
-listofdep.sort(key=itemgetter(2))
-listofarr.sort(key=itemgetter(2))
+    try:
+        traveltime213 = setofarr[-3]
+    except:
+        traveltime213 = [None, None]
+    
+    trainsperday21 = round(totalfreqcontainer/364)
 
-for dep in listofdep:
-    if dep == listofdep[0]:
-        td2 = datetime.date.today() #to handle trains leaving around 12am
-        if round((datetime.datetime.combine(td2, dep[2]) - datetime.datetime.combine(td2, listofdep[-1][2])).total_seconds()/60) < 0:
-            td1 = datetime.date.today() - datetime.timedelta(days=1)
+    #find first and last travel times based on largest difference between departure times
+    listofdep.sort(key=itemgetter(2))
+    listofarr.sort(key=itemgetter(2))
+    
+    for dep in listofdep:
+        if dep == listofdep[0]:
+            td2 = datetime.date.today() #to handle trains leaving around 12am
+            if round((datetime.datetime.combine(td2, dep[2]) - datetime.datetime.combine(td2, listofdep[-1][2])).total_seconds()/60) < 0:
+                td1 = datetime.date.today() - datetime.timedelta(days=1)
+            else:
+                td1 = datetime.date.today()
+            difference = round((datetime.datetime.combine(td2, dep[2]) - datetime.datetime.combine(td1, listofdep[-1][2])).total_seconds()/60)
+            dep.append(difference)
+            lastdep = dep[2]
         else:
-            td1 = datetime.date.today()
-        difference = round((datetime.datetime.combine(td2, dep[2]) - datetime.datetime.combine(td1, listofdep[-1][2])).total_seconds()/60)
-        dep.append(difference)
-        lastdep = dep[2]
+            td2 = datetime.date.today() #to handle trains leaving around 12am
+            if round((datetime.datetime.combine(td2, dep[2]) - datetime.datetime.combine(td2, lastdep)).total_seconds()/60) < 0:
+                td1 = datetime.date.today() - datetime.timedelta(days=1)
+            else:
+                td1 = datetime.date.today()
+            difference = round((datetime.datetime.combine(td2, dep[2]) - datetime.datetime.combine(td1, lastdep)).total_seconds()/60)
+            dep.append(difference)
+            lastdep = dep[2]
+
+    for dep in listofarr:
+        if dep == listofarr[0]:
+            td2 = datetime.date.today() #to handle trains leaving around 12am
+            if round((datetime.datetime.combine(td2, dep[2]) - datetime.datetime.combine(td2, listofarr[-1][2])).total_seconds()/60) < 0:
+                td1 = datetime.date.today() - datetime.timedelta(days=1)
+            else:
+                td1 = datetime.date.today()
+            difference = round((datetime.datetime.combine(td2, dep[2]) - datetime.datetime.combine(td1, listofarr[-1][2])).total_seconds()/60)
+            dep.append(difference)
+            lastdep = dep[2]
+        else:
+            td2 = datetime.date.today() #to handle trains leaving around 12am
+            if round((datetime.datetime.combine(td2, dep[2]) - datetime.datetime.combine(td2, lastdep)).total_seconds()/60) < 0:
+                td1 = datetime.date.today() - datetime.timedelta(days=1)
+            else:
+                td1 = datetime.date.today()
+            difference = round((datetime.datetime.combine(td2, dep[2]) - datetime.datetime.combine(td1, lastdep)).total_seconds()/60)
+            dep.append(difference)
+            lastdep = dep[2]
+
+    if len(listofdep) > 2:
+        firsttraveltime12 = max(listofdep, key=lambda x: x[5])[2]
+        if listofdep[(listofdep.index(max(listofdep, key=lambda x: x[5]))-1)][2]:
+            lasttraveltime21 = listofdep[(listofdep.index(max(listofdep, key=lambda x: x[5]))-1)][2]
+        else:
+            lasttraveltime21 = min(listofdep, key=lambda x: x[5])[2]
     else:
-        td2 = datetime.date.today() #to handle trains leaving around 12am
-        if round((datetime.datetime.combine(td2, dep[2]) - datetime.datetime.combine(td2, lastdep)).total_seconds()/60) < 0:
-            td1 = datetime.date.today() - datetime.timedelta(days=1)
+        firsttraveltime12 = None
+        lasttraveltime21 = None        
+    
+    if len(listofarr) > 2:
+        firsttraveltime21 = max(listofarr, key=lambda x: x[5])[2]
+        if listofarr[(listofarr.index(max(listofarr, key=lambda x: x[5]))-1)][2]:
+            lasttraveltime12 = listofarr[(listofarr.index(max(listofarr, key=lambda x: x[5]))-1)][2]
         else:
-            td1 = datetime.date.today()
-        difference = round((datetime.datetime.combine(td2, dep[2]) - datetime.datetime.combine(td1, lastdep)).total_seconds()/60)
-        dep.append(difference)
-        lastdep = dep[2]
-
-for dep in listofarr:
-    if dep == listofdep[0]:
-        td2 = datetime.date.today() #to handle trains leaving around 12am
-        if round((datetime.datetime.combine(td2, dep[2]) - datetime.datetime.combine(td2, listofdep[-1][2])).total_seconds()/60) < 0:
-            td1 = datetime.date.today() - datetime.timedelta(days=1)
-        else:
-            td1 = datetime.date.today()
-        difference = round((datetime.datetime.combine(td2, dep[2]) - datetime.datetime.combine(td1, listofdep[-1][2])).total_seconds()/60)
-        dep.append(difference)
-        lastdep = dep[2]
+            lasttraveltime12 = min(listofarr, key=lambda x: x[5])[2]
     else:
-        td2 = datetime.date.today() #to handle trains leaving around 12am
-        if round((datetime.datetime.combine(td2, dep[2]) - datetime.datetime.combine(td2, lastdep)).total_seconds()/60) < 0:
-            td1 = datetime.date.today() - datetime.timedelta(days=1)
-        else:
-            td1 = datetime.date.today()
-        difference = round((datetime.datetime.combine(td2, dep[2]) - datetime.datetime.combine(td1, lastdep)).total_seconds()/60)
-        dep.append(difference)
-        lastdep = dep[2]
+        firsttraveltime21 = None
+        lasttraveltime12 = None
 
-firsttraveltime12 = max(listofdep, key=lambda x: x[5])[2]
-firsttraveltime21 = max(listofarr, key=lambda x: x[5])[2]
+    #append to list
+    print([
+        pair[0], 
+        pair[1], 
+        traveltime121[0],
+        traveltime121[1],
+        traveltime122[0],
+        traveltime122[1],
+        traveltime123[0],
+        traveltime123[1],
+        trainsperday12,
+        firsttraveltime12,
+        lasttraveltime12
+    ])
 
-lasttraveltime12 = listofarr[(listofarr.index(max(listofarr, key=lambda x: x[5]))-1)][2]
-lasttraveltime21 = listofdep[(listofdep.index(max(listofdep, key=lambda x: x[5]))-1)][2]
-
-#append to list
-travellist = []
-travellist.append([
-    station1, 
-    station2, 
-    traveltime121[0],
-    traveltime121[1],
-    traveltime122[0],
-    traveltime122[1],
-    traveltime123[0],
-    traveltime123[1],
-    trainsperday12,
-    firsttraveltime12,
-    lasttraveltime12
-])
-
-travellist.append([
-    station2, 
-    station1, 
-    traveltime211[0],
-    traveltime211[1],
-    traveltime212[0],
-    traveltime212[1],
-    traveltime213[0],
-    traveltime213[1],
-    trainsperday21,
-    firsttraveltime21,
-    lasttraveltime21
-])
-
-for row in travellist:
-    print(row)
+    print([
+        pair[1], 
+        pair[0], 
+        traveltime211[0],
+        traveltime211[1],
+        traveltime212[0],
+        traveltime212[1],
+        traveltime213[0],
+        traveltime213[1],
+        trainsperday21,
+        firsttraveltime21,
+        lasttraveltime21
+    ])
 
 # For every approach: loop through every trainroute
 # Append every track that go to destination.
@@ -308,6 +334,7 @@ for row in travellist:
 # Then create new list of all nondirect connections.
 # sync up based on switchover times. 
 # Then another list etc etc.
+
 
 
 """
