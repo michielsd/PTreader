@@ -9,6 +9,7 @@ import psycopg2
 #establish database connection
 try:
     conn = psycopg2.connect("dbname='fswork' user='fsuser' host='localhost' password='123456'")
+    print("Database connection established")
 except:
     print("Database connection failed")
 
@@ -26,7 +27,7 @@ for line in tt:
     if line.startswith("#"):
         routelist = []
         keyname = line[0:9]
-    if line.startswith(">") or line.startswith("+"): #start en stops
+    if line.startswith(">") or line.startswith("+") or line.startswith("."): #start en stops
         lineholder = re.findall(r'\w+', line)
         
     #corrigeren voor nachttreinen
@@ -139,6 +140,13 @@ traininsert = """INSERT INTO trains(train, depstation, arrstation, frequency, de
 
 timeinsert = """INSERT INTO traveltimes(departfrom, arriveat, time1, freq1, time2, freq2, time3, freq3, trainsperday, firsttimeto, lasttimefrom)
     VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""" 
+
+for k, v in routedict.items():
+    for dep in v:
+        if isinstance(dep, int): #if first line from dict value (= frequency of train)
+            freq = dep
+        elif isinstance(dep, list) and 'lg' in dep: #if list of train stops
+            print(dep)
 
 #find times for station1 to station2
 alldepslist = []
@@ -381,29 +389,3 @@ conn.close()
 # Then create new list of all nondirect connections.
 # sync up based on switchover times. 
 # Then another list etc etc.
-
-
-"""
-
-end product is list of lists
-
-first: stopovers!!
-
-generalize on a per day basis. Calculate travel time: mode
-number of times a day
-
-# find out what trains go on what day
-calendardict = {}
-for day in range(0,364):
-    footnotelist = []
-    for k, v in rosterdict.items():
-            if v[day] == "1":
-                footnotelist.append(k)
-    calendardict[day] = footnotelist
-
-                
-spread = []
-
-
-
-"""

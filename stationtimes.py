@@ -95,82 +95,87 @@ stations = []
 for row in stationstuple:
     stations.append(list(row))
 
-#download valid routes from dbase
-loadvalidtimes = """SELECT * FROM traveltimes WHERE firsttimeto IS NOT NULL"""
+loadtimes = """SELECT stopstation, depstation, arrstation FROM stopovertimes"""
 
-cur.execute(loadvalidtimes)
-validtraveltuple = cur.fetchall()
-validtravel = []
-validtraveltimes = {}
-for row in validtraveltuple:
-    validtravel.append([row[1],row[2]])
+cur.execute(loadtimes)
+loadtuple = cur.fetchall()
 
-#loop through all stations
-for station in stations[0:2]:
+inserttime = """INSERT INTO stopovertimes(stopstation, depstation, arrstation, stoptime)
+    VALUES(%s, %s, %s, %s)"""
+
+
+#loop through all stations - 1309 ht to ut!!!!
+for station in stations:
+    print("verifying %s" % (station[1]))
     stopovertime = int(station[-2])
-    print(station)
+    arrivals = []
+    departures = []
     #create dictionary with only routes going through the station
     stationdict = {}
     for k, v in routedict.items():
         for w in v:
             if isinstance(w, int): #if first line from dict value (= frequency of train)
                 freq = w
-            elif isinstance(w, list) and w[0] == station[2]:
-                stationdict[freq] = v[1:]
-
-    #loop through stationdict and find stations one can get fro and one can get to
-    arrivals = []
-    departures = []
-    today = datetime.date.today()
-    for k, v in stationdict.items():
-        for w in v:
-            if w[0] == station[2]:
-                arrivaltime = w[1]
-                departuretime = w[-1]
-                break
-
-        for w in v:
-            if datetime.datetime.combine(today, w[1]) < datetime.datetime.combine(today, arrivaltime):
-                arrivals.append([w[0], arrivaltime, k])
-            elif datetime.datetime.combine(today, w[-1]) > datetime.datetime.combine(today,departuretime):
-                departures.append([w[0], departuretime, k])
+            elif isinstance(w, list):
+                if w[0] == station[2]:
+                    lookfrom = v.index(w)
+                    arrivaltime = w[1]
+                    departuretime = w[-1]
+                    for x in v[:lookfrom]:
+                        if isinstance(x, list):
+                            arrivals.append([x[0], arrivaltime, freq])
+                    for x in v[lookfrom:]:
+                        if isinstance(x, list):
+                            departures.append([x[0], departuretime, freq])
 
     #find combinations of all departure and arrival stations
-    arrivalstations = [x[0] for x in arrivals]
-    departurestations = [x[0] for x in departures]
+    arrivalstations = set([x[0] for x in arrivals])
+    departurestations = set([x[0] for x in departures])
     connections = [[x,y] for x in arrivalstations for y in departurestations]
-    
+
     #for every connection, calculate modal short stopover time
     for connection in connections:
+        if (station[2], connection[0], connection[1]) not in loadtuple:
+            #create narrow set of arrivals and departures and sort
+            arrivalset = []
+            departureset = []
+            for arrival in arrivals:
+                if arrival[0] == connection[0]:
+                    arrivalset.append(arrival)
+            arrivalset.sort(key=itemgetter(1))
+            for departure in departures:
+                if departure[0] == connection[1]:
+                    departureset.append(departure)
+            departureset.sort(key=itemgetter(1))
+
+            #for every in arrivalset, search nearest departure
+            comboset = []
+            today = datetime.date.today()
+            for arrival in arrivalset:
+                arrivaltime = datetime.datetime.combine(today, arrival[1])
+                for departure in departureset:
+                    departuretime = datetime.datetime.combine(today, departure[-2])
+                    timediff = round((departuretime - arrivaltime).total_seconds()/60)
+                    if timediff < 50 and timediff >= stopovertime: 
+                        stoptime = round((datetime.datetime.combine(today, departure[-2]) - datetime.datetime.combine(today, arrival[1])).total_seconds()/60)
+                        comboset.append([arrival, departure, stoptime])
+                        break
+
+            comboset.sort(key=itemgetter(2))
+            if comboset:
+                commitcombo = comboset[0]
+                cur.execute(inserttime, (
+                    station[2], 
+                    commitcombo[0][0], 
+                    commitcombo[1][0], 
+                    commitcombo[2])
+                )
+                conn.commit()
+                print("committed %s: %s - %s" % (station[1], comboset[0][0][0], comboset[0][1][0]))
         
-        #create narrow set of arrivals and departures and sort
-        arrivalset = []
-        departureset = []
-        for arrival in arrivals:
-            if arrival[0] == connection[0]:
-                arrivalset.append(arrival)
-        arrivalset.sort(key=itemgetter(1))
-        for departure in departures:
-            if departure[0] == connection[1]:
-                departureset.append(departure)
-        departureset.sort(key=itemgetter(1))
 
-        #for every in arrivalset, search nearest departure
-        comboset = []
-        today = datetime.date.today()
-        for arrival in arrivalset:
-            arrivaltime = datetime.datetime.combine(today, arrival[1])
-            for departure in departureset:
-                departuretime = datetime.datetime.combine(today, departure[-2])
-                if departuretime > (arrivaltime + datetime.timedelta(minutes=(stopovertime+30))):
-                    stopovertime = round((datetime.datetime.combine(today, departure[-2]) - datetime.datetime.combine(today, arrival[1])).total_seconds()/60)
-                    comboset.append([arrival, departure, stopovertime])
-                    break
-
-        for row in comboset:
-            print(row)
-
-
+#WORK WITH ROUTE DICT FROM TIMEREAD: ONLY OF COLLECTION OF TRAINS
+"""
     departures = []
     arrivals = []
     stopoverstation = station[2]
@@ -181,7 +186,31 @@ for station in stations[0:2]:
             departures.append(trip[1])
     print(len(arrivals))
     print(len(departures))
-    connections = [[x,y] for x in arrivals for y in departures]
 
-#WORK WITH ROUTE DICT FROM TIMEREAD: ONLY OF COLLECTION OF TRAINS
+
+loadvalidtimes = SELECT * FROM traveltimes WHERE firsttimeto IS NOT NULL
+
+cur.execute(loadvalidtimes)
+validtraveltuple = cur.fetchall()
+validtravel = []
+validtraveltimes = {}
+for row in validtraveltuple:
+    validtravel.append([row[1],row[2]])
+
+DOE ALS DIT!!! met v.index()
+
+counter = 0
+for k,v in routedict.items():
+    for w in v:
+        if isinstance(w, list):
+            if w[0] == 'ht':
+                lookfrom = v.index(w)
+                saver = w
+                for x in v[:lookfrom]:
+                    if isinstance(x, list):
+                        if x[0] == 'ut':
+                            counter += 1
+
+print(counter)
+
 """

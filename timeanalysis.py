@@ -2,17 +2,24 @@
 import psycopg2
 import datetime
 import itertools
+from operator import itemgetter
 
 #function to convert postgres time to datetime time
 def trainimporter(depstation, arrstation):
-    loadtrains = """SELECT depstation, arrstation, train, frequency, deptime, arrtime, difference FROM trains WHERE depstation='%s' AND arrstation='%s'""" % (depstation, arrstation)
+    loadtrains = """SELECT depstation, arrstation, train, frequency, deptime, arrtime, difference FROM trains WHERE frequency > 80 AND depstation='%s' AND arrstation='%s'""" % (depstation, arrstation)
     cur.execute(loadtrains)
     trainstuple = cur.fetchall()
     trains = []
     for row in trainstuple:
         trains.append(list(row))
 
-    return trains
+    trains.sort(key=itemgetter(3))
+    if len(trains) > 100:
+        trainsredux = trains[-100:]
+    else:
+        trainsredux = trains
+
+    return trainsredux
 
 def stopimporter(depstation, arrstation, arrtime,stoptime):
     today = datetime.date.today()
@@ -24,20 +31,67 @@ def stopimporter(depstation, arrstation, arrtime,stoptime):
     workingtime = datetime.datetime.combine(today, firstdeptime)
     lastdeptime = (workingtime + datetime.timedelta(minutes=int(stoptime)) + datetime.timedelta(minutes=30)).time()
     
-    loadtrains = """SELECT depstation, arrstation, train, frequency, deptime, arrtime, difference FROM trains WHERE depstation='%s' AND arrstation='%s' AND deptime BETWEEN '%s' AND '%s'""" % (depstation, arrstation, firstdeptime, lastdeptime)
+    loadtrains = """SELECT depstation, arrstation, train, frequency, deptime, arrtime, difference FROM trains WHERE frequency > 80 AND depstation='%s' AND arrstation='%s' AND deptime BETWEEN '%s' AND '%s'""" % (depstation, arrstation, firstdeptime, lastdeptime)
     cur.execute(loadtrains)
     trainstuple = cur.fetchall()
     trains = []
     for row in trainstuple:
         trains.append(list(row))
 
-    return trains    
+    trains.sort(key=itemgetter(3))
+    if len(trains) > 100:
+        trainsredux = trains[-100:]
+    else:
+        trainsredux = trains
 
-def timerconverter(posttime):
-    hours = int(posttime[0:2])
-    minutes = int(posttime[3:5])
-    seconds = int(posttime[6:8])
-    return(datetime.time(hours, minutes, seconds))
+    return trainsredux    
+
+def modefinder(departuretime, stoparrival, depfrequency, triplist):
+    today = datetime.date.today()
+    
+    hours = int(departuretime[0:2])
+    minutes = int(departuretime[3:5])
+    seconds = int(departuretime[6:8])
+    deptime = datetime.time(hours, minutes, seconds)
+
+    checklist = []
+    for trip in triplist:
+        hours = int(trip[5][0:2])
+        minutes = int(trip[5][3:5])
+        seconds = int(trip[5][6:8])    
+        arrtime = datetime.time(hours, minutes, seconds)
+
+        departed = datetime.datetime.combine(today, deptime)
+        arrived = datetime.datetime.combine(today, arrtime)
+        traveltime = round((arrived - departed).total_seconds()/60)
+        
+        hours = int(trip[4][0:2])
+        minutes = int(trip[4][3:5])
+        seconds = int(trip[4][6:8])
+        stopdep = datetime.time(hours, minutes, seconds)
+
+        hours = int(stoparrival[0:2])
+        minutes = int(stoparrival[3:5])
+        seconds = int(stoparrival[6:8])
+        stoparr = datetime.time(hours, minutes, seconds)
+
+        stopoverstation = trip[0]
+        stoptime = round((datetime.datetime.combine(today, stopdep) - datetime.datetime.combine(today, stoparr)).total_seconds()/60)
+        
+        freq = min([depfrequency, trip[3]]) 
+
+        checklist.append([freq, traveltime, stopoverstation, stoptime])
+
+    checklist.sort(key=itemgetter(0))
+    modetimes = checklist[-3:]
+
+    modetimes.sort(key=itemgetter(2))
+    
+    if len(modetimes)> 0:
+        modetime = modetimes[0]
+        return modetime
+    else:
+        return modetimes
 
 #establish database connection
 to = datetime.datetime.now()
@@ -64,8 +118,15 @@ for row in traveltimestuple:
 cur.execute(loadvalidtimes)
 validtraveltuple = cur.fetchall()
 validtravel = []
+validtraveltimes = {}
 for row in validtraveltuple:
     validtravel.append([row[1],row[2]])
+    
+    combistring = '%s%s' % (row[1], row[2])
+    try:
+        validtraveltimes[combistring] = max(int(row[3]), int(row[5]), int(row[7]))
+    except:
+        validtraveltimes[combistring] = int(row[3])
 
 cur.execute(loadstations)
 stationstuple = cur.fetchall()
@@ -88,16 +149,17 @@ cur.execute(loadalltimes)
 alltimes = cur.fetchall()
 
 #find travel times with stopover
-for trip in traveltimes[700:705]:
+for trip in traveltimes[700:750]:
     depstation = trip[1]
     arrstation = trip[2]
     directtravellist = []
     if trip[4] is not None:
-        directtravellist.append(trip[4])
+        directtravellist.append(trip[3])
     if trip[6] is not None:
-        directtravellist.append(trip[6])
+        directtravellist.append(trip[5])
     if trip[8] is not None:
-        directtravellist.append(trip[8])
+        directtravellist.append(trip[7])
+    listoftraveltimes = []
 
     #verify if already in dbase
     if (depstation,arrstation) in alltimes:
@@ -107,28 +169,58 @@ for trip in traveltimes[700:705]:
         print("verifying %s - %s" % (depstation, arrstation))
         
         #verify what trains depart from depstation
-        departurelist = []
+        deptostoplist = []
         for pair in validtravel: # select routes from the depstation
             if depstation == pair[0]:
-                departurelist.append(pair[1])
-        depintlist = []
-        
+                combistring = '%s%s' % (pair[0], pair[1])
+                combitimes = validtraveltimes[combistring]
+                if all(int(i) > combitimes for i in directtravellist): #only if traveltime to 1st stop is less than direct travel 
+                    deptostoplist.append(pair[1])
+        stoptoarrlist = []
+        for pair in validtravel:
+            if pair[0] in deptostoplist and pair[1] == arrstation:
+                stoptoarrlist.append(pair[0])
+         
         #verify what trains depart from depstatoin to selected routes 
-        for stop in departurelist:
-            depintlist = trainimporter(depstation, stop)
-            for end in depintlist:
-                if all(i > end[-1] for i in directtravellist): #only if traveltime to 1st stop is less than direct travel
-                    destlist = []
-                    stoparrival = end[5]
-                    stopdummy = stopdict.get(stop)[0]
-                    stoptime = stopdict.get(stop)[1]
+        if stoptoarrlist:
+            if len(stoptoarrlist)>1:
+                firsttriplist = []
+                for stop in stoptoarrlist:
+                    firsttriplist = trainimporter(depstation, stop)
+                    for firsttrip in firsttriplist:
+                        secondtriplist = []
+                        deptime = firsttrip[4]
+                        depfrequency = firsttrip[3]
+                        stoparrival = firsttrip[5]
+                        stopdummy = stopdict.get(stop)[0]
+                        stoptime = stopdict.get(stop)[1]
                     
-                    #verify what trains depart 30 minutes from stopoverstation if stopoverstation
-                    if stopdummy == '1':
-                        destlist = stopimporter(stop, arrstation, stoparrival, stoptime)
-                        print(end,destlist)
-        te = datetime.datetime.now()
-        print("Time spent: %s \n" % (te-to))
+                        #verify what trains depart 30 minutes from stopoverstation if stopoverstation
+                        if stopdummy == '1':
+                            secondtriplist = stopimporter(stop, arrstation, stoparrival, stoptime)
+                            if modefinder(deptime, stoparrival, depfrequency, secondtriplist):
+                                listoftraveltimes.append(modefinder(deptime, stoparrival, depfrequency, secondtriplist))
+
+        
+            else:
+                firsttriplist = []
+                firsttriplist = trainimporter(depstation, stop)
+                secondtriplist = []
+                stoparrival = firsttrip[5]
+                stopdummy = stopdict.get(stop)[0]
+                stoptime = stopdict.get(stop)[1]
+                    
+                #verify what trains depart 30 minutes from stopoverstation if stopoverstation
+                if stopdummy == '1':
+                    secondtriplist = stopimporter(stop, arrstation, stoparrival, stoptime)
+                    if modefinder(deptime, stoparrival, depfrequency, secondtriplist):
+                        listoftraveltimes.append(modefinder(deptime, stoparrival, depfrequency, secondtriplist))
+
+            listoftraveltimes.sort(key=itemgetter(0))
+            print(listoftraveltimes[-1])
+
+    te = datetime.datetime.now()
+    print("Time spent: %s \n" % (te-to))
 
 
 
